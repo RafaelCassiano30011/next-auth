@@ -1,11 +1,11 @@
 import Router from "next/router";
 import { createContext, ReactNode, useEffect, useState } from "react";
 import { setCookie, parseCookies, destroyCookie } from "nookies";
-import { api } from "../services/api";
+import { api } from "../services/apiClient";
 
 type User = {
   email: string;
-  permission: string[];
+  permissions: string[];
   roles: string[];
 };
 
@@ -16,6 +16,7 @@ type SingInCredentials = {
 
 type AuthContextData = {
   signIn: (credentials: SingInCredentials) => Promise<void>;
+  signOut: () => void;
   isAuthenticated: boolean;
   user: User;
 };
@@ -26,12 +27,33 @@ interface AuthProviderProps {
 
 export const AuthContext = createContext({} as AuthContextData);
 
+let authChannel: BroadcastChannel;
+
 export const signOut = () => {
-  signOut();
+  destroyCookie(undefined, "nextAuth.token");
+  destroyCookie(undefined, "nextAuth.refreshToken");
+
+  authChannel?.postMessage(`signOut`);
+
+  Router.push("/");
 };
 export const AuthProvider = ({ children }: AuthProviderProps) => {
   const [user, setUser] = useState<User>({} as User);
   const isAuthenticated = !!user;
+
+  useEffect(() => {
+    authChannel = new BroadcastChannel("auth");
+
+    authChannel.onmessage = (message) => {
+      switch (message.data) {
+        case "signOut":
+          signOut();
+          break;
+        default:
+          break;
+      }
+    };
+  });
 
   useEffect(() => {
     const { "nextAuth.token": token } = parseCookies();
@@ -40,15 +62,12 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
       api
         .get("/me")
         .then((response) => {
-          const { email, permission, roles } = response?.data;
+          const { email, permissions, roles } = response?.data;
 
-          setUser({ email, permission, roles });
+          setUser({ email, permissions, roles });
         })
         .catch((error) => {
-          destroyCookie(undefined, "nextAuth.token");
-          destroyCookie(undefined, "nextAuth.refreshToken");
-
-          Router.push("/");
+          signOut();
         });
     }
   }, []);
@@ -60,7 +79,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         password,
       });
 
-      const { refreshToken, token, permission, roles } = response.data;
+      const { refreshToken, token, permissions, roles } = response.data;
 
       setCookie(undefined, "nextAuth.token", token, {
         maxAge: 60 * 60 * 24 * 30, // 30 days
@@ -73,7 +92,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
 
       setUser({
         email,
-        permission,
+        permissions,
         roles,
       });
 
@@ -86,7 +105,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
   };
 
   return (
-    <AuthContext.Provider value={{ signIn, isAuthenticated, user }}>
+    <AuthContext.Provider value={{ signIn, isAuthenticated, user, signOut }}>
       {children}
     </AuthContext.Provider>
   );
